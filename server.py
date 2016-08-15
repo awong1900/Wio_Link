@@ -469,6 +469,7 @@ class myApplication(web.Application):
         handlers = [
         (r"/v1[/]?", IndexHandler),
         (r"/v1/test[/]?", TestHandler),
+        (r"/v1/user[/]?", UserHandler),
         (r"/v1/user/create[/]?", UserCreateHandler),
         (r"/v1/user/changepassword[/]?", UserChangePasswordHandler),
         (r"/v1/user/retrievepassword[/]?", UserRetrievePasswordHandler),
@@ -556,4 +557,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

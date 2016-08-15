@@ -51,6 +51,7 @@ from tornado.log import *
 from tornado.concurrent import Future
 from tornado_cors import CorsMixin
 from tornado.ioloop import IOLoop
+from sso import sso
 
 TOKEN_SECRET = "!@#$%^&*RG)))))))JM<==TTTT==>((((((&^HVFT767JJH"
 
@@ -59,45 +60,66 @@ class BaseHandler(CorsMixin, web.RequestHandler):
     CORS_ORIGIN = '*'
     CORS_HEADERS = 'Content-Type'
 
-    def get_current_user(self):
+    @gen.coroutine
+    def prepare(self):
+        self.user = yield self.get_user()
+
+    @gen.coroutine
+    def get_user(self):
         user = None
-        token = self.get_argument("access_token","")
+        token = self.get_argument("access_token", "")
         if not token:
             try:
                 token_str = self.request.headers.get("Authorization")
-                token = token_str.replace("token ","")
+                token = token_str.replace("token ", "")
             except:
                 token = None
-
-        if token:
+        
+        if not token:
+            raise gen.Return(None)
+            
+        try:
+            cur = self.application.cur
+            cur.execute('select * from users where token="%s"'%token)
+            rows = cur.fetchall()
+            if len(rows) > 0:
+                user = rows[0]
+        except Exception as e:
+            gen_log.error(e)
+            
+        if not user:
             try:
+                data = yield sso.auth_token(token)
+                print data
+                user_id = data['user_id']
+                token = data['token']
                 cur = self.application.cur
-                cur.execute('select * from users where token="%s"'%token)
+                cur.execute('SELECT * FROM users WHERE user_id=?', (user_id,))
+                rows = cur.fetchall()
+                if len(rows) > 0:
+                    cur.execute('UPDATE users SET token=? WHERE user_id=?', (token, user_id))
+                else:
+                    cur.execute("INSERT INTO users(user_id,token,created_at) VALUES(?,?,datetime('now'))", (user_id, token))
+                cur.execute('select * from users where user_id="%s"'%user_id)
                 rows = cur.fetchall()
                 if len(rows) > 0:
                     user = rows[0]
-            except:
-                user = None
+            except Exception as e:
+                gen_log.error(e)
+                raise gen.Return(None)
+            finally:
+                self.application.conn.commit()
+
+        raise gen.Return(user)
+
+    def get_current_user(self):
+        if not self.user:
+            self.resp(403, "Requires authentication")
         else:
-            user = None
+            gen_log.info("get current user, id: %s" % self.user['user_id'])
 
-        if not user:
-            self.resp(403,"Please login to get the token")
-        else:
-            gen_log.info("get current user, id: %s, email: %s" % (user['user_id'], user['email']))
+        return self.user
 
-        return user
-
-
-
-    '''
-    200 OK - API call successfully executed.
-    400 Bad Request - Wrong Grove/method searching path provided, or wrong parameter for method provided
-    403 Forbidden - Your access token is not authorized.
-    404 Not Found - The device you requested is not currently online, or the resource/endpoint you requested does not exist.
-    408 Timed Out - The server can not communicate with device in a specified time out period.
-    500 Server errors - It's usually caused by the unexpected errors of our side.
-    '''
     def resp (self, status_code, meta=None):
         if status_code >= 300:
             self.failure_reason = str(meta)
@@ -146,8 +168,6 @@ class TestHandler(web.RequestHandler):
     def get(self):
         self.render("test.html", ip=self.request.remote_ip)
 
-
-
 class UserCreateHandler(BaseHandler):
     def get (self):
         self.resp(404, "Please post to this url")
@@ -183,7 +203,6 @@ class UserCreateHandler(BaseHandler):
             self.application.conn.commit()
 
         self.resp(200, meta={"token": token})
-
 
 class ExtUsersHandler(BaseHandler):
     def get (self, uri):
@@ -238,7 +257,13 @@ class ExtUsersHandler(BaseHandler):
 
         self.resp(200)
 
-
+class UserHandler(BaseHandler):
+    @web.authenticated
+    def get(self):
+        token =  self.current_user['token']
+        user_id = self.current_user["user_id"]
+        self.write({'user_id': user_id, 'token': token})
+        
 class UserChangePasswordHandler(BaseHandler):
     def get (self):
         self.resp(403, "Please post to this url")
@@ -355,8 +380,6 @@ IOT Team from Seeed
             return
         gen_log.info('sent new password %s to %s' % (new_password, email))
 
-
-
 class UserLoginHandler(BaseHandler):
     def get (self):
         self.resp(403, "Please post to this url")
@@ -440,8 +463,6 @@ class BoardsListHandler(BaseHandler):
     def post(self):
         self.resp(403, "Please get this url")
 
-
-
 class NodeCreateHandler(BaseHandler):
     def get (self):
         self.resp(404, "Please post to this url")
@@ -473,7 +494,6 @@ class NodeCreateHandler(BaseHandler):
             return
         finally:
             self.application.conn.commit()
-
 
 class NodeListHandler(BaseHandler):
     def initialize (self, conns):
@@ -615,8 +635,6 @@ class NodeBaseHandler(BaseHandler):
 
         return node
 
-
-
 class NodeReadWriteHandler(NodeBaseHandler):
 
     @gen.coroutine
@@ -757,7 +775,6 @@ class NodeFunctionHandler(NodeReadWriteHandler):
                 return
         self.resp(404, "Node is offline")
 
-
 class NodeSettingHandler(NodeReadWriteHandler):
 
     def pre_request(self, req_type, uri):
@@ -797,7 +814,6 @@ class NodeSettingHandler(NodeReadWriteHandler):
                     gen_log.error(e)
                 finally:
                     self.application.conn.commit()
-
 
 class NodeEventHandler(websocket.WebSocketHandler):
     def initialize (self, conns):
@@ -885,7 +901,6 @@ class NodeEventHandler(websocket.WebSocketHandler):
         self.connected = False
         self.close()
 
-
 class NodeGetConfigHandler(NodeBaseHandler):
 
     def get(self):
@@ -925,7 +940,6 @@ class NodeGetConfigHandler(NodeBaseHandler):
 
     def post(self):
         self.resp(404, "Please get this url")
-
 
 class NodeGetResourcesHandler(NodeBaseHandler):
 
@@ -1223,7 +1237,6 @@ class NodeGetResourcesHandler(NodeBaseHandler):
     def post(self):
         self.resp(404, "Please get this url")
 
-
 class FirmwareBuildingHandler(NodeBaseHandler):
     """
     post two para, node_token and yaml
@@ -1485,9 +1498,6 @@ class FirmwareBuildingHandler(NodeBaseHandler):
         else:
             self.state_happened[self.node_sn] = [state]
 
-
-
-
 class OTAStatusReportingHandler(NodeBaseHandler):
 
     @gen.coroutine
@@ -1537,7 +1547,6 @@ class OTAStatusReportingHandler(NodeBaseHandler):
     def on_connection_close(self):
         # global_message_buffer.cancel_wait(self.future)
         gen_log.info("on_connection_close")
-
 
 class OTAFirmwareSendingHandler(BaseHandler):
 
