@@ -462,7 +462,6 @@ class DeviceServer(TCPServer):
             gen_log.error(e)
 
 
-
 class myApplication(web.Application):
 
     def __init__(self,db_conn,cursor):
@@ -503,6 +502,7 @@ class myApplication(web.Application):
             pass
 
         web.Application.__init__(self, handlers, debug=auto_reload_for_debug, template_path='templates', websocket_ping_interval=30)
+
 
 class myApplication_OTA(web.Application):
 
