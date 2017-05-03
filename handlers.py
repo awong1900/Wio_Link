@@ -59,7 +59,45 @@ TOKEN_SECRET = "!@#$%^&*RG)))))))JM<==TTTT==>((((((&^HVFT767JJH"
 class BaseHandler(CorsMixin, web.RequestHandler):
     CORS_ORIGIN = '*'
     CORS_HEADERS = 'Content-Type'
+    
+    def resp (self, status_code, meta=None):
+        if status_code >= 300:
+            self.failure_reason = str(meta)
+            raise web.HTTPError(status_code)
+        else:
+            if isinstance(meta, dict):
+                self.write(meta)
+            elif isinstance(meta, list):
+                self.write({"data":meta})
+            elif not meta:
+                self.write({'result':'ok'})
+            else:
+                self.write(meta)
 
+    def write_error(self, status_code, **kwargs):
+        if self.settings.get("serve_traceback") and "exc_info" in kwargs:
+            # in debug mode, try to send a traceback
+            lines = []
+            for line in traceback.format_exception(*kwargs["exc_info"]):
+                lines.append(line)
+
+            self.finish({"error": self.failure_reason, "traceback": lines})
+        else:
+            try:
+              self.finish({"error": self.failure_reason})
+            except AttributeError:
+              self.finish({"error": "Unknown error occured."})
+
+    def get_uuid (self):
+        return str(uuid.uuid4())
+
+    def gen_uuid_without_dash(self):
+        return str(uuid.uuid1()).replace('-','')
+
+    def gen_token (self, email):
+        return jwt.encode({'email': email,'uuid':self.get_uuid()}, TOKEN_SECRET, algorithm='HS256').split(".")[2]
+
+class UserBaseHandler(BaseHandler):
     @gen.coroutine
     def prepare(self):
         self.user = yield self.get_user()
@@ -119,46 +157,8 @@ class BaseHandler(CorsMixin, web.RequestHandler):
             gen_log.info("get current user, id: %s" % self.user['user_id'])
 
         return self.user
-
-    def resp (self, status_code, meta=None):
-        if status_code >= 300:
-            self.failure_reason = str(meta)
-            raise web.HTTPError(status_code)
-        else:
-            if isinstance(meta, dict):
-                self.write(meta)
-            elif isinstance(meta, list):
-                self.write({"data":meta})
-            elif not meta:
-                self.write({'result':'ok'})
-            else:
-                self.write(meta)
-
-
-    def write_error(self, status_code, **kwargs):
-        if self.settings.get("serve_traceback") and "exc_info" in kwargs:
-            # in debug mode, try to send a traceback
-            lines = []
-            for line in traceback.format_exception(*kwargs["exc_info"]):
-                lines.append(line)
-
-            self.finish({"error": self.failure_reason, "traceback": lines})
-        else:
-            try:
-              self.finish({"error": self.failure_reason})
-            except AttributeError:
-              self.finish({"error": "Unknown error occured."})
-
-    def get_uuid (self):
-        return str(uuid.uuid4())
-
-    def gen_uuid_without_dash(self):
-        return str(uuid.uuid1()).replace('-','')
-
-    def gen_token (self, email):
-        return jwt.encode({'email': email,'uuid':self.get_uuid()}, TOKEN_SECRET, algorithm='HS256').split(".")[2]
-
-class IndexHandler(BaseHandler):
+        
+class IndexHandler(UserBaseHandler):
     @web.authenticated
     def get(self):
         #DeviceServer.accepted_conns[0].submit_cmd("OTA\r")
@@ -257,14 +257,14 @@ class ExtUsersHandler(BaseHandler):
 
         self.resp(200)
 
-class UserHandler(BaseHandler):
+class UserHandler(UserBaseHandler):
     @web.authenticated
     def get(self):
         token =  self.current_user['token']
         user_id = self.current_user["user_id"]
         self.write({'user_id': user_id, 'token': token})
         
-class UserChangePasswordHandler(BaseHandler):
+class UserChangePasswordHandler(UserBaseHandler):
     def get (self):
         self.resp(403, "Please post to this url")
 
@@ -422,7 +422,7 @@ class UserLoginHandler(BaseHandler):
         finally:
             self.application.conn.commit()
 
-class DriversHandler(BaseHandler):
+class DriversHandler(UserBaseHandler):
     @web.authenticated
     def get (self):
         cur_dir = os.path.split(os.path.realpath(__file__))[0]
@@ -435,7 +435,7 @@ class DriversHandler(BaseHandler):
     def post(self):
         self.resp(403, "Please get this url")
 
-class DriversStatusHandler(BaseHandler):
+class DriversStatusHandler(UserBaseHandler):
     @web.authenticated
     def get (self):
         cur_dir = os.path.split(os.path.realpath(__file__))[0]
@@ -449,7 +449,7 @@ class DriversStatusHandler(BaseHandler):
     def post(self):
         self.resp(403, "Please get this url")
 
-class BoardsListHandler(BaseHandler):
+class BoardsListHandler(UserBaseHandler):
     @web.authenticated
     def get (self):
         cur_dir = os.path.split(os.path.realpath(__file__))[0]
@@ -463,7 +463,7 @@ class BoardsListHandler(BaseHandler):
     def post(self):
         self.resp(403, "Please get this url")
 
-class NodeCreateHandler(BaseHandler):
+class NodeCreateHandler(UserBaseHandler):
     def get (self):
         self.resp(404, "Please post to this url")
 
@@ -495,7 +495,7 @@ class NodeCreateHandler(BaseHandler):
         finally:
             self.application.conn.commit()
 
-class NodeListHandler(BaseHandler):
+class NodeListHandler(UserBaseHandler):
     def initialize (self, conns):
         self.conns = conns
 
@@ -526,7 +526,7 @@ class NodeListHandler(BaseHandler):
     def post(self):
         self.resp(404, "Please get this url")
 
-class NodeRenameHandler(BaseHandler):
+class NodeRenameHandler(UserBaseHandler):
     def get (self):
         self.resp(404, "Please post to this url")
 
@@ -558,7 +558,7 @@ class NodeRenameHandler(BaseHandler):
         finally:
             self.application.conn.commit()
 
-class NodeDeleteHandler(BaseHandler):
+class NodeDeleteHandler(UserBaseHandler):
     @web.authenticated
     def get (self):
         self.resp(404, "Please post to this url")
